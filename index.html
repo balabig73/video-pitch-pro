@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Pitch Pro</title>
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.2/dist/ffmpeg.min.js"></script>
+
+<style>
+body {
+  font-family: -apple-system;
+  background:#111;
+  color:white;
+  padding:20px;
+}
+.card {
+  background:#1c1c1e;
+  padding:15px;
+  border-radius:12px;
+  margin-bottom:20px;
+}
+button {
+  padding:14px;
+  width:100%;
+  margin-top:12px;
+  border:none;
+  border-radius:10px;
+  font-weight:600;
+}
+.primary { background:#007aff; color:white; }
+.secondary { background:#2c2c2e; color:white; }
+progress { width:100%; margin-top:15px; }
+input[type=range] { width:100%; }
+</style>
+</head>
+
+<body>
+
+<h2>🎬 Video Pitch Pro</h2>
+
+<div class="card">
+<input type="file" id="videoInput" accept="video/*">
+<video id="preview" controls style="width:100%;margin-top:10px;"></video>
+</div>
+
+<div class="card">
+<h4>Tonalità rilevata</h4>
+<div id="detected">-</div>
+</div>
+
+<div class="card">
+<h4>Trasposizione</h4>
+<input type="range" id="pitch" min="-12" max="12" value="0">
+<div id="pitchValue">0 semitoni</div>
+<button class="secondary" onclick="adjust(-1)">-1</button>
+<button class="secondary" onclick="adjust(1)">+1</button>
+</div>
+
+<div class="card">
+<label><input type="checkbox" id="compress"> Compressione intelligente 4K</label>
+</div>
+
+<progress id="progress" value="0" max="100"></progress>
+
+<button class="primary" onclick="processVideo()">Processa Video</button>
+
+<script>
+const { createFFmpeg, fetchFile } = FFmpeg;
+const ffmpeg = createFFmpeg({
+  log: true,
+  progress: ({ ratio }) => {
+    document.getElementById("progress").value = ratio * 100;
+  }
+});
+
+document.getElementById("videoInput").onchange = function(e) {
+  const file = e.target.files[0];
+  document.getElementById("preview").src = URL.createObjectURL(file);
+  detectPitch(file);
+};
+
+document.getElementById("pitch").oninput = function() {
+  document.getElementById("pitchValue").innerText = this.value + " semitoni";
+};
+
+function adjust(n) {
+  let slider = document.getElementById("pitch");
+  slider.value = parseInt(slider.value) + n;
+  slider.dispatchEvent(new Event('input'));
+}
+
+async function detectPitch(file) {
+  const audioCtx = new AudioContext();
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  
+  const data = audioBuffer.getChannelData(0);
+  let max = 0;
+  let index = 0;
+  
+  for (let i = 0; i < data.length; i++) {
+    if (Math.abs(data[i]) > max) {
+      max = Math.abs(data[i]);
+      index = i;
+    }
+  }
+  
+  const freq = index * audioBuffer.sampleRate / data.length;
+  document.getElementById("detected").innerText = frequencyToNote(freq);
+}
+
+function frequencyToNote(freq) {
+  const notes = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const a4 = 440;
+  const semitone = 12 * Math.log2(freq / a4);
+  const noteIndex = Math.round(semitone) % 12;
+  return notes[Math.abs(noteIndex)];
+}
+
+async function processVideo() {
+
+  const input = document.getElementById("videoInput").files[0];
+  const pitch = document.getElementById("pitch").value;
+  const compress = document.getElementById("compress").checked;
+  
+  if (!input) return alert("Seleziona un video");
+  
+  if (!ffmpeg.isLoaded()) await ffmpeg.load();
+  
+  ffmpeg.FS("writeFile", "input.mp4", await fetchFile(input));
+  
+  const factor = Math.pow(2, pitch / 12);
+  
+  let command = [
+    "-i","input.mp4",
+    "-filter:a",`asetrate=44100*${factor},aresample=44100`
+  ];
+  
+  if (compress) {
+    command.push("-vcodec","libx264","-crf","23");
+  } else {
+    command.push("-c:v","copy");
+  }
+  
+  command.push("output.mp4");
+  
+  await ffmpeg.run(...command);
+  
+  const data = ffmpeg.FS("readFile","output.mp4");
+  const videoBlob = new Blob([data.buffer], { type:"video/mp4" });
+  const url = URL.createObjectURL(videoBlob);
+  
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "video_pitch_pro.mp4";
+  a.click();
+}
+</script>
+
+</body>
+</html>
